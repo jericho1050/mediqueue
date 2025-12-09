@@ -1,0 +1,53 @@
+{{- if .Values.httpRoute.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "mediqueue-chart.fullname" . }}
+  namespace: {{ include "mediqueue-chart.namespace" . }}
+  labels:
+    {{- include "mediqueue-chart.labels" . | nindent 4 }}
+  {{- with .Values.httpRoute.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+    {{- range .Values.httpRoute.parentRefs }}
+    - name: {{ .name }}
+      {{- if .namespace }}
+      namespace: {{ .namespace }}
+      {{- else }}
+      namespace: {{ include "mediqueue-chart.namespace" $ }}
+      {{- end }}
+      {{- if .sectionName }}
+      sectionName: {{ .sectionName }}
+      {{- end }}
+    {{- end }}
+  {{- if .Values.httpRoute.hostnames }}
+  hostnames:
+    {{- toYaml .Values.httpRoute.hostnames | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.httpRoute.rules }}
+    - matches:
+        {{- toYaml .matches | nindent 8 }}
+      {{- if .filters }}
+      filters:
+        {{- toYaml .filters | nindent 8 }}
+      {{- end }}
+      backendRefs:
+        {{- if eq .service "api" }}
+        - name: {{ include "mediqueue-chart.api.fullname" $ }}
+          port: {{ $.Values.api.service.port }}
+          weight: 1
+        {{- else if eq .service "frontend" }}
+        - name: {{ include "mediqueue-chart.frontend.fullname" $ }}
+          port: {{ $.Values.frontend.service.port }}
+          weight: 1
+        {{- else }}
+        - name: {{ .service }}
+          port: {{ .port | default 80 }}
+          weight: {{ .weight | default 1 }}
+        {{- end }}
+    {{- end }}
+{{- end }}

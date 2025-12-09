@@ -1,0 +1,307 @@
+# MediQueue Helm Chart Values
+# ============================
+# Optimized for K3s on EC2 (single node)
+
+# Namespace configuration
+namespace:
+  create: true
+  name: mediqueue
+
+# Global settings
+global:
+  imageTag: "latest"
+  imagePullPolicy: Always
+  # ECR credentials - create secret with:
+  # kubectl create secret docker-registry ecr-registry-secret \
+  #   --docker-server=071564565652.dkr.ecr.us-east-1.amazonaws.com \
+  #   --docker-username=AWS \
+  #   --docker-password=$(aws ecr get-login-password --region us-east-1)
+  imagePullSecrets:
+    - name: ecr-registry-secret
+
+# AWS ECR Repository
+images:
+  repository: "071564565652.dkr.ecr.us-east-1.amazonaws.com"
+
+# Frontend configuration
+frontend:
+  enabled: true
+  replicas: 1  # Single node - keep at 1
+  image:
+    name: mediqueue/frontend
+    tag: ""  # Uses global.imageTag if empty
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 80
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  probes:
+    liveness:
+      enabled: true
+      path: /
+      port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 10
+    readiness:
+      enabled: true
+      path: /
+      port: 80
+      initialDelaySeconds: 5
+      periodSeconds: 5
+
+# API configuration
+api:
+  enabled: true
+  replicas: 1  # Single node - keep at 1
+  image:
+    name: mediqueue/api
+    tag: ""  # Uses global.imageTag if empty
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 4000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  probes:
+    liveness:
+      enabled: true
+      path: /health
+      port: 4000
+      initialDelaySeconds: 15
+      periodSeconds: 10
+    readiness:
+      enabled: true
+      path: /health
+      port: 4000
+      initialDelaySeconds: 5
+      periodSeconds: 5
+
+# Worker configuration
+worker:
+  enabled: true
+  replicas: 1
+  image:
+    name: mediqueue/worker
+    tag: ""  # Uses global.imageTag if empty
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Node Agent DaemonSet (demo/monitoring simulation)
+nodeAgent:
+  enabled: true
+  image:
+    repository: busybox
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  checkInterval: 30  # seconds between health checks
+  resources:
+    requests:
+      cpu: 10m
+      memory: 20Mi
+    limits:
+      cpu: 50m
+      memory: 50Mi
+
+# PostgreSQL configuration
+postgres:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "15-alpine"
+  replicas: 1
+  auth:
+    database: mediqueue
+    username: postgres
+    # Set password via: --set postgres.auth.password=YOUR_PASSWORD
+    password: ""
+    existingSecret: ""
+    secretKey: postgres-password
+  service:
+    port: 5432
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: "local-path"  # K3s default storage class
+    accessModes:
+      - ReadWriteOnce
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Redis configuration
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7-alpine"
+  replicas: 1
+  auth:
+    enabled: false
+    password: ""
+    existingSecret: ""
+    secretKey: redis-password
+  service:
+    port: 6379
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: "local-path"  # K3s default storage class
+    accessModes:
+      - ReadWriteOnce
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# Service Account
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+# Horizontal Pod Autoscaler (disabled for single node)
+autoscaling:
+  enabled: false
+  api:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+  frontend:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+  worker:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 2
+    targetCPUUtilizationPercentage: 80
+
+# ===========================================
+# INGRESS (Use this for K3s with Traefik)
+# ===========================================
+ingress:
+  enabled: true
+  className: "traefik"  # K3s default ingress class
+  annotations: {}
+    # traefik.ingress.kubernetes.io/router.middlewares: default-redirect-https@kubernetescrd
+  hosts:
+    - host: ""  # Empty = accept any hostname (use EC2 IP)
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: api
+        - path: /
+          pathType: Prefix
+          service: frontend
+  tls: []
+  #  - secretName: mediqueue-tls
+  #    hosts:
+  #      - mediqueue.example.com
+
+# ===========================================
+# Gateway API (Alternative - requires setup)
+# ===========================================
+gateway:
+  enabled: false  # Disabled - use Ingress instead for K3s
+  name: mediqueue-gateway
+  gatewayClassName: "traefik"
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+  addresses: []
+
+# HTTP Route Configuration (only if using Gateway API)
+httpRoute:
+  enabled: false
+  annotations: {}
+  hostnames: []
+  parentRefs:
+    - name: mediqueue-gateway
+      namespace: ""
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      service: api
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      service: frontend
+
+# Pod Disruption Budget (disabled for single node)
+podDisruptionBudget:
+  enabled: false
+  api:
+    minAvailable: 1
+  frontend:
+    minAvailable: 1
+
+# Network Policy
+networkPolicy:
+  enabled: false
+
+# ConfigMap values
+config:
+  nodeEnv: production
+  logLevel: info
+  custom: {}
+
+# Additional pod annotations
+podAnnotations: {}
+
+# Additional pod labels
+podLabels: {}
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity rules
+affinity: {}
+
+# Security context for pods (disabled - let containers use their defaults)
+podSecurityContext: {}
+  # fsGroup: 1000
+
+# Security context for containers (disabled for compatibility with postgres/redis)
+securityContext: {}
+  # runAsNonRoot: true
+  # runAsUser: 1000
+  # allowPrivilegeEscalation: false
+  # readOnlyRootFilesystem: false
+  # capabilities:
+  #   drop:
+  #     - ALL

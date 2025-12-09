@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mediqueue-chart.fullname" . }}-config
+  namespace: {{ include "mediqueue-chart.namespace" . }}
+  labels:
+    {{- include "mediqueue-chart.labels" . | nindent 4 }}
+data:
+  NODE_ENV: {{ .Values.config.nodeEnv | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  # Database connection info (non-sensitive)
+  POSTGRES_HOST: {{ include "mediqueue-chart.postgres.host" . | quote }}
+  POSTGRES_PORT: {{ .Values.postgres.service.port | quote }}
+  POSTGRES_DB: {{ .Values.postgres.auth.database | quote }}
+  # Redis connection info (non-sensitive)
+  REDIS_HOST: {{ include "mediqueue-chart.redis.host" . | quote }}
+  REDIS_PORT: {{ .Values.redis.service.port | quote }}
+  {{- range $key, $value := .Values.config.custom }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+

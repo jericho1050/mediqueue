@@ -1,0 +1,21 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mediqueue-chart.postgres.fullname" . }}
+  namespace: {{ include "mediqueue-chart.namespace" . }}
+  labels:
+    {{- include "mediqueue-chart.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless service for StatefulSet
+  ports:
+    - port: {{ .Values.postgres.service.port }}
+      targetPort: {{ .Values.postgres.service.port }}
+      protocol: TCP
+      name: postgres
+  selector:
+    {{- include "mediqueue-chart.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+{{- end }}

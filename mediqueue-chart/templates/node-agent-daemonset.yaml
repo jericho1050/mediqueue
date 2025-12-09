@@ -1,0 +1,53 @@
+{{- if .Values.nodeAgent.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "mediqueue-chart.fullname" . }}-node-agent
+  namespace: {{ include "mediqueue-chart.namespace" . }}
+  labels:
+    {{- include "mediqueue-chart.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node-agent
+spec:
+  selector:
+    matchLabels:
+      {{- include "mediqueue-chart.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: node-agent
+  template:
+    metadata:
+      labels:
+        {{- include "mediqueue-chart.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: node-agent
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "mediqueue-chart.serviceAccountName" . }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: agent
+        image: "{{ .Values.nodeAgent.image.repository }}:{{ .Values.nodeAgent.image.tag }}"
+        imagePullPolicy: {{ .Values.nodeAgent.image.pullPolicy }}
+        command:
+          - sh
+          - -c
+          - |
+            while true; do
+              echo "Checking node health...";
+              sleep {{ .Values.nodeAgent.checkInterval }};
+            done
+        resources:
+          {{- toYaml .Values.nodeAgent.resources | nindent 10 }}
+        {{- with .Values.securityContext }}
+        securityContext:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+{{- end }}
+

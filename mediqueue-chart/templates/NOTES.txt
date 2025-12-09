@@ -1,0 +1,127 @@
+================================================================================
+  MediQueue has been deployed to K3s!
+================================================================================
+
+Namespace: {{ include "mediqueue-chart.namespace" . }}
+
+Components deployed:
+{{- if .Values.frontend.enabled }}
+  ✓ Frontend: {{ include "mediqueue-chart.frontend.fullname" . }}
+{{- end }}
+{{- if .Values.api.enabled }}
+  ✓ API: {{ include "mediqueue-chart.api.fullname" . }}
+{{- end }}
+{{- if .Values.worker.enabled }}
+  ✓ Worker: {{ include "mediqueue-chart.worker.fullname" . }}
+{{- end }}
+{{- if .Values.postgres.enabled }}
+  ✓ PostgreSQL: {{ include "mediqueue-chart.postgres.fullname" . }}
+{{- end }}
+{{- if .Values.redis.enabled }}
+  ✓ Redis: {{ include "mediqueue-chart.redis.fullname" . }}
+{{- end }}
+
+--------------------------------------------------------------------------------
+ACCESSING THE APPLICATION
+--------------------------------------------------------------------------------
+
+{{- if .Values.ingress.enabled }}
+
+Ingress is enabled via Traefik (K3s default).
+
+Access the application at:
+  - Frontend: http://<EC2_PUBLIC_IP>/
+  - API:      http://<EC2_PUBLIC_IP>/api
+
+To get your EC2 public IP:
+  curl -s http://169.254.169.254/latest/meta-data/public-ipv4
+
+{{- if .Values.ingress.hosts }}
+{{- range .Values.ingress.hosts }}
+{{- if .host }}
+  Configured hostname: {{ .host }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- else if .Values.httpRoute.enabled }}
+
+HTTPRoute is enabled. Access via your Gateway.
+
+{{- else }}
+
+No Ingress configured. Access services via port-forward:
+
+  # Frontend
+  kubectl port-forward svc/{{ include "mediqueue-chart.frontend.fullname" . }} 8080:{{ .Values.frontend.service.port }} \
+    -n {{ include "mediqueue-chart.namespace" . }}
+
+  # API
+  kubectl port-forward svc/{{ include "mediqueue-chart.api.fullname" . }} 4000:{{ .Values.api.service.port }} \
+    -n {{ include "mediqueue-chart.namespace" . }}
+
+{{- end }}
+
+--------------------------------------------------------------------------------
+DATABASE CONNECTIONS
+--------------------------------------------------------------------------------
+
+PostgreSQL:
+  Host: {{ include "mediqueue-chart.postgres.host" . }}
+  Port: {{ .Values.postgres.service.port }}
+  Database: {{ .Values.postgres.auth.database }}
+  User: {{ .Values.postgres.auth.username }}
+  Secret: {{ include "mediqueue-chart.postgres.secretName" . }}
+
+Redis:
+  Host: {{ include "mediqueue-chart.redis.host" . }}
+  Port: {{ .Values.redis.service.port }}
+
+--------------------------------------------------------------------------------
+USEFUL COMMANDS
+--------------------------------------------------------------------------------
+
+# Check all pods
+kubectl get pods -n {{ include "mediqueue-chart.namespace" . }}
+
+# Watch pods come up
+kubectl get pods -n {{ include "mediqueue-chart.namespace" . }} -w
+
+# View API logs
+kubectl logs -f deployment/{{ include "mediqueue-chart.api.fullname" . }} -n {{ include "mediqueue-chart.namespace" . }}
+
+# View worker logs
+kubectl logs -f deployment/{{ include "mediqueue-chart.worker.fullname" . }} -n {{ include "mediqueue-chart.namespace" . }}
+
+# Get PostgreSQL password
+kubectl get secret {{ include "mediqueue-chart.postgres.secretName" . }} \
+  -n {{ include "mediqueue-chart.namespace" . }} \
+  -o jsonpath='{.data.postgres-password}' | base64 -d && echo
+
+# Connect to PostgreSQL
+kubectl exec -it {{ include "mediqueue-chart.postgres.fullname" . }}-0 \
+  -n {{ include "mediqueue-chart.namespace" . }} -- psql -U postgres -d mediqueue
+
+# Check Ingress
+kubectl get ingress -n {{ include "mediqueue-chart.namespace" . }}
+
+# Check Traefik (K3s ingress controller)
+kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik
+
+--------------------------------------------------------------------------------
+TROUBLESHOOTING
+--------------------------------------------------------------------------------
+
+If pods are stuck in ImagePullBackOff:
+  1. Check ECR secret exists:
+     kubectl get secret ecr-registry-secret -n {{ include "mediqueue-chart.namespace" . }}
+  
+  2. Refresh ECR token manually:
+     sudo /usr/local/bin/refresh-ecr-token.sh
+
+  3. Make sure images are pushed to ECR:
+     aws ecr describe-images --repository-name mediqueue/api
+     aws ecr describe-images --repository-name mediqueue/frontend
+     aws ecr describe-images --repository-name mediqueue/worker
+
+================================================================================

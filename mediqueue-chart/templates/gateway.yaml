@@ -1,0 +1,38 @@
+{{- if .Values.gateway.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.gateway.name | default (printf "%s-gateway" (include "mediqueue-chart.fullname" .)) }}
+  namespace: {{ include "mediqueue-chart.namespace" . }}
+  labels:
+    {{- include "mediqueue-chart.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.gateway.gatewayClassName }}
+  gatewayClassName: {{ .Values.gateway.gatewayClassName }}
+  {{- end }}
+  listeners:
+    {{- range .Values.gateway.listeners }}
+    - name: {{ .name }}
+      protocol: {{ .protocol }}
+      port: {{ .port }}
+      {{- if .hostname }}
+      hostname: {{ .hostname | quote }}
+      {{- end }}
+      {{- if .tls }}
+      tls:
+        mode: {{ .tls.mode }}
+        {{- if .tls.certificateRefs }}
+        certificateRefs:
+          {{- toYaml .tls.certificateRefs | nindent 10 }}
+        {{- end }}
+      {{- end }}
+      allowedRoutes:
+        namespaces:
+          from: Same
+    {{- end }}
+  {{- if .Values.gateway.addresses }}
+  addresses:
+    {{- toYaml .Values.gateway.addresses | nindent 4 }}
+  {{- end }}
+{{- end }}
+

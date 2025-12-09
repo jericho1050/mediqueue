@@ -1,0 +1,72 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mediqueue-chart.worker.fullname" . }}
+  namespace: {{ include "mediqueue-chart.namespace" . }}
+  labels:
+    {{- include "mediqueue-chart.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.worker.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "mediqueue-chart.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      annotations:
+        {{- include "mediqueue-chart.podAnnotations" . | nindent 8 }}
+      labels:
+        {{- include "mediqueue-chart.labels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      {{- include "mediqueue-chart.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "mediqueue-chart.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.images.repository }}/{{ .Values.worker.image.name }}:{{ .Values.worker.image.tag | default .Values.global.imageTag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "mediqueue-chart.fullname" . }}-config
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mediqueue-chart.postgres.secretName" . }}
+                  key: {{ .Values.postgres.auth.secretKey }}
+            {{- if .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mediqueue-chart.redis.secretName" . }}
+                  key: {{ .Values.redis.auth.secretKey }}
+            {{- end }}
+            - name: REDIS_URL
+              value: {{ include "mediqueue-chart.redis.url" . | quote }}
+            - name: POSTGRES_URL
+              value: {{ include "mediqueue-chart.postgres.url" . | quote }}
+            - name: DATABASE_URL
+              value: {{ include "mediqueue-chart.postgres.url" . | quote }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
