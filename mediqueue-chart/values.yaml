@@ -109,7 +109,7 @@ nodeAgent:
     repository: busybox
     tag: "latest"
     pullPolicy: IfNotPresent
-  checkInterval: 30  # seconds between health checks
+  checkInterval: 60  # seconds between health checks
   resources:
     requests:
       cpu: 10m
@@ -210,21 +210,24 @@ autoscaling:
 ingress:
   enabled: true
   className: "traefik"  # K3s default ingress class
-  annotations: {}
-    # traefik.ingress.kubernetes.io/router.middlewares: default-redirect-https@kubernetescrd
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt  # Triggers cert-manager to issue TLS cert
   hosts:
-    - host: ""  # Empty = accept any hostname (use EC2 IP)
+    - host: "mediqueue.online"
       paths:
-        - path: /api
-          pathType: Prefix
-          service: api
         - path: /
           pathType: Prefix
           service: frontend
-  tls: []
-  #  - secretName: mediqueue-tls
-  #    hosts:
-  #      - mediqueue.example.com
+    - host: "api.mediqueue.online"
+      paths:
+        - path: /
+          pathType: Prefix
+          service: api
+  tls:
+    - secretName: mediqueue-tls-cert
+      hosts:
+        - mediqueue.online
+        - api.mediqueue.online
 
 # ===========================================
 # Gateway API (Alternative - requires setup)
@@ -305,3 +308,7 @@ securityContext: {}
   # capabilities:
   #   drop:
   #     - ALL
+
+letsencrypt:
+  email: jerichokunserrano@gmail.com
+

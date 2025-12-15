@@ -5,13 +5,20 @@ metadata:
   namespace: argocd
 spec: 
   project: default
+
   source:
     repoURL: https://github.com/jericho1050/mediqueue.git
     targetRevision: HEAD
     path: mediqueue-chart
+    helm:
+      valueFiles:
+        - values.yaml
+        # - values-local.yaml
+
   destination:
     server: https://kubernetes.default.svc
     namespace: mediqueue
+
   syncPolicy:
     automated:
       prune: true
@@ -20,11 +27,3 @@ spec:
       - CreateNamespace=true
       - PrunePropagationPolicy=Foreground
       - PruneLast=true
-    managedNamespaceMetadata:
-      annotations:
-        argocd.argoproj.io/sync-wave: "1"
-      labels:
-        argocd.argoproj.io/instance: mediqueue
-        argocd.argoproj.io/secret-type: repository
-        argocd.argoproj.io/secret-name: mediqueue-repo
-  

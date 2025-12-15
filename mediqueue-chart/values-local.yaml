@@ -1,0 +1,50 @@
+# values-local.yaml - Overrides for kind cluster
+# ================================================
+# Load images into kind first:
+#   kind load docker-image medi-queue-reception-portal:latest
+#   kind load docker-image medi-queue-triage-api:latest
+#   kind load docker-image medi-queue-doctor-worker:latest
+
+# Override the base repository to empty (use image name directly)
+images:
+  repository: ""
+
+# Global overrides
+global:
+  imagePullPolicy: Never  # Use pre-loaded images in kind
+  imagePullSecrets: []    # No ECR secret needed locally
+
+# Frontend - use local image name
+frontend:
+  image:
+    name: medi-queue-reception-portal
+    tag: "latest"
+
+# API - use local image name  
+api:
+  image:
+    name: medi-queue-triage-api
+    tag: "latest"
+
+# Worker - use local image name
+worker:
+  image:
+    name: medi-queue-worker
+    tag: "latest"
+
+# PostgreSQL - use kind's storage class
+postgres:
+  persistence:
+    storageClass: "standard"
+
+# Redis - use kind's storage class
+redis:
+  persistence:
+    storageClass: "standard"
+
+# Disable Traefik ingress (kind doesn't have it by default)
+ingress:
+  enabled: false
+
+# Use NodePort for local access instead
+# You can port-forward: kubectl port-forward svc/mediqueue-frontend 8080:80 -n mediqueue
