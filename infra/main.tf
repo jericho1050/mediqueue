@@ -108,84 +108,139 @@ resource "aws_instance" "k8s_node" {
 
   # 4. The Magic Script (Installs K3s on boot)
   user_data = <<-EOF
-              #!/bin/bash
-              set -e
+#!/bin/bash
+set -e
 
-              # Update and install utilities
-              apt-get update
-              apt-get install -y curl unzip
+# Setup logging
+exec 1> /var/log/user-data.log 2>&1
 
-              # Install AWS CLI v2
-              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-              unzip -q awscliv2.zip
-              ./aws/install
-              rm -rf aws awscliv2.zip
+echo "Starting setup at $(date)"
 
-              # Install K3s (Lightweight Kubernetes)
-              curl -sfL https://get.k3s.io | sh -
+# Update and install utilities
+apt-get update
+apt-get install -y curl unzip
 
-              # Wait for K3s to be ready (up to 120 seconds)
-              echo "Waiting for K3s to be ready..."
-              for i in {1..120}; do
-                if [ -f /etc/rancher/k3s/k3s.yaml ] && kubectl get nodes &>/dev/null; then
-                  break
-                fi
-                sleep 1
-              done
+# Install AWS CLI v2
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip -q awscliv2.zip
+./aws/install
+rm -rf aws awscliv2.zip
 
-              # Allow the default user (ubuntu) to read the kubeconfig
-              mkdir -p /home/ubuntu/.kube
-              cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
-              chown ubuntu:ubuntu /home/ubuntu/.kube/config
-              chmod 600 /home/ubuntu/.kube/config
+# Get public IP (IMDSv2 compatible)
+TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4)
+echo "Detected public IP: $PUBLIC_IP"
 
-              # Add alias for easier typing
-              echo "alias k=kubectl" >> /home/ubuntu/.bashrc
-              echo "export KUBECONFIG=/home/ubuntu/.kube/config" >> /home/ubuntu/.bashrc
+# Install K3s with TLS SAN for public IP
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server --tls-san $PUBLIC_IP" sh -
 
-              # Install Helm
-              curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+# Wait for K3s to be ready
+echo "Waiting for K3s..."
+until kubectl get nodes &>/dev/null; do
+  sleep 2
+done
 
-              chmod 644 /etc/rancher/k3s/k3s.yaml # Make sure the kubeconfig file is readable by the ubuntu user
+# Allow the default user (ubuntu) to read the kubeconfig
+mkdir -p /home/ubuntu/.kube
+cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
+chown ubuntu:ubuntu /home/ubuntu/.kube/config
+chmod 600 /home/ubuntu/.kube/config
 
-              # Create mediqueue namespace
-              kubectl create namespace mediqueue --dry-run=client -o yaml | kubectl apply -f -
+# Add alias for easier typing
+echo "alias k=kubectl" >> /home/ubuntu/.bashrc
+echo "export KUBECONFIG=/home/ubuntu/.kube/config" >> /home/ubuntu/.bashrc
 
-              # Create ECR pull secret for K3s (refreshed by cron)
-              AWS_REGION="${data.aws_region.current.name}"
-              AWS_ACCOUNT="${data.aws_caller_identity.current.account_id}"
-              ECR_REGISTRY="$AWS_ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com"
-              
-              # Get ECR password and create k8s secret
-              ECR_TOKEN=$(aws ecr get-login-password --region $AWS_REGION)
-              kubectl create secret docker-registry ecr-registry-secret \
-                --namespace=mediqueue \
-                --docker-server=$ECR_REGISTRY \
-                --docker-username=AWS \
-                --docker-password=$ECR_TOKEN \
-                --dry-run=client -o yaml | kubectl apply -f -
+# Install Helm
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
-              # Create cron job to refresh ECR token every 6 hours (token expires in 12h)
-              cat > /usr/local/bin/refresh-ecr-token.sh << 'SCRIPT'
-              #!/bin/bash
-              AWS_REGION="${data.aws_region.current.name}"
-              AWS_ACCOUNT="${data.aws_caller_identity.current.account_id}"
-              ECR_REGISTRY="$AWS_ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com"
-              ECR_TOKEN=$(aws ecr get-login-password --region $AWS_REGION)
-              kubectl create secret docker-registry ecr-registry-secret \
-                --namespace=mediqueue \
-                --docker-server=$ECR_REGISTRY \
-                --docker-username=AWS \
-                --docker-password=$ECR_TOKEN \
-                --dry-run=client -o yaml | kubectl apply -f -
-              SCRIPT
-              chmod +x /usr/local/bin/refresh-ecr-token.sh
-              
-              # Add to crontab (every 6 hours)
-              echo "0 */6 * * * /usr/local/bin/refresh-ecr-token.sh" | crontab -
+# Create mediqueue namespace
+kubectl create namespace mediqueue --dry-run=client -o yaml | kubectl apply -f -
 
-              echo "Setup complete!"
-              EOF
+# Create ECR pull secret for K3s
+AWS_REGION="${data.aws_region.current.name}"
+AWS_ACCOUNT="${data.aws_caller_identity.current.account_id}"
+ECR_REGISTRY="$AWS_ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com"
+
+# Get ECR password and create k8s secret
+ECR_TOKEN=$(aws ecr get-login-password --region $AWS_REGION)
+kubectl create secret docker-registry ecr-registry-secret \
+  --namespace=mediqueue \
+  --docker-server=$ECR_REGISTRY \
+  --docker-username=AWS \
+  --docker-password=$ECR_TOKEN \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# Create cron job to refresh ECR token every 6 hours (token expires in 12h)
+cat > /usr/local/bin/refresh-ecr-token.sh << 'CRONSCRIPT'
+#!/bin/bash
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+AWS_REGION=$(aws configure get region || echo "us-east-1")
+AWS_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+ECR_REGISTRY="$AWS_ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com"
+ECR_TOKEN=$(aws ecr get-login-password --region $AWS_REGION)
+kubectl create secret docker-registry ecr-registry-secret \
+  --namespace=mediqueue \
+  --docker-server=$ECR_REGISTRY \
+  --docker-username=AWS \
+  --docker-password=$ECR_TOKEN \
+  --dry-run=client -o yaml | kubectl apply -f -
+CRONSCRIPT
+chmod +x /usr/local/bin/refresh-ecr-token.sh
+
+# Add to crontab (every 6 hours) with logging
+echo "0 */6 * * * /usr/local/bin/refresh-ecr-token.sh >> /var/log/ecr-refresh.log 2>&1" | crontab -
+
+# ----------------------------------------------------------------
+# 5. AUTOMATE ARGOCD BOOTSTRAP
+# ----------------------------------------------------------------
+echo "Installing ArgoCD..."
+
+# Install ArgoCD
+kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+# Wait for ArgoCD to be fully ready
+echo "Waiting for ArgoCD CRDs..."
+kubectl wait --for=condition=established --timeout=120s crd/applications.argoproj.io
+
+echo "Waiting for ArgoCD deployments..."
+kubectl wait --for=condition=available --timeout=300s deployment/argocd-server -n argocd
+kubectl wait --for=condition=available --timeout=300s deployment/argocd-repo-server -n argocd
+kubectl wait --for=condition=available --timeout=300s deployment/argocd-applicationset-controller -n argocd
+
+# Create ArgoCD Application manifest
+cat << 'APP_YAML' > /home/ubuntu/mediqueue-app.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mediqueue
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/jericho1050/mediqueue.git
+    targetRevision: HEAD
+    path: mediqueue-chart
+    helm:
+      valueFiles:
+        - values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mediqueue
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=Foreground
+APP_YAML
+
+chown ubuntu:ubuntu /home/ubuntu/mediqueue-app.yaml
+kubectl apply -f /home/ubuntu/mediqueue-app.yaml
+
+echo "Setup complete! Check /var/log/user-data.log for details."
+EOF
 
   tags = {
     Name = var.instance_name
@@ -325,7 +380,7 @@ resource "aws_security_group" "k8s_sg" {
 resource "aws_ecr_repository" "api" {
   name                 = var.image_repository_api
   image_tag_mutability = "MUTABLE"
-  force_delete = true
+  force_delete         = true
 
   image_scanning_configuration {
     scan_on_push = true
@@ -337,7 +392,7 @@ resource "aws_ecr_repository" "api" {
 resource "aws_ecr_repository" "worker" {
   name                 = var.image_repository_worker
   image_tag_mutability = "MUTABLE"
-  force_delete = true
+  force_delete         = true
   image_scanning_configuration {
     scan_on_push = true
   }
@@ -348,7 +403,7 @@ resource "aws_ecr_repository" "worker" {
 resource "aws_ecr_repository" "frontend" {
   name                 = var.image_repository_frontend
   image_tag_mutability = "MUTABLE"
-  force_delete = true 
+  force_delete         = true
   image_scanning_configuration {
     scan_on_push = true
   }
