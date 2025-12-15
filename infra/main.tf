@@ -191,7 +191,18 @@ chmod +x /usr/local/bin/refresh-ecr-token.sh
 echo "0 */6 * * * /usr/local/bin/refresh-ecr-token.sh >> /var/log/ecr-refresh.log 2>&1" | crontab -
 
 # ----------------------------------------------------------------
-# 5. AUTOMATE ARGOCD BOOTSTRAP
+# 5. INSTALL CERT-MANAGER (for HTTPS/TLS)
+# ----------------------------------------------------------------
+echo "Installing cert-manager..."
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.4/cert-manager.yaml
+
+echo "Waiting for cert-manager..."
+kubectl wait --for=condition=available --timeout=300s deployment/cert-manager -n cert-manager
+kubectl wait --for=condition=available --timeout=300s deployment/cert-manager-webhook -n cert-manager
+kubectl wait --for=condition=available --timeout=300s deployment/cert-manager-cainjector -n cert-manager
+
+# ----------------------------------------------------------------
+# 6. AUTOMATE ARGOCD BOOTSTRAP
 # ----------------------------------------------------------------
 echo "Installing ArgoCD..."
 

@@ -310,6 +310,6 @@ securityContext: {}
   #     - ALL
 
 letsencrypt:
-  enabled: false  # Set to true after installing cert-manager
+  enabled: true
   email: jerichokunserrano@gmail.com
 
